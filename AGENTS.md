@@ -11,12 +11,13 @@
 
 ## 文档结构
 
-1. `docs/ARCHITECTURE.md`: 项目架构
+1. `docs/ARCHITECTURE.md`: 给大模型阅读的项目架构
 2. `docs/PROJECT_BRIEF.md`: 项目最初的需求，只在我要求的时候读取
 3. `README.md`: 项目介绍的中文文档
 
 ## 必须遵守
 
 1. 在修改了项目文件后，及时更新 `docs/ARCHITECTURE.md` 文档。
+2. `ARCHITECTURE.md` 文件是给大模型看的，尽量少使用由字符画出来的结构图，更多使用易读的文本。
 2. 在代码中和 `ARCHITECTURE.md` 中使用英文注释。
 3. 在编写代码时，只在必要的情况下增加函数，以保证代码的可阅读性。

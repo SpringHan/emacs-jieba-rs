@@ -26,12 +26,13 @@
 
 ;; This package uses jieba-rs, through a small dynamic module, to teach
 ;; Emacs that a Chinese "word" is a jieba token rather than a run of
-;; characters.  Enabling `emacs-jieba-rs-mode' remaps `forward-word',
-;; `backward-word' and `backward-kill-word', so the usual M-f, M-b and
-;; M-DEL keys move and kill by word:
+;; characters.  Enabling the global `emacs-jieba-rs-mode' advises
+;; `forward-word', `backward-word' and `backward-kill-word', so the
+;; usual M-f, M-b and M-DEL keys move and kill by word.  Words that are
+;; not Chinese are left to the original commands.
 ;;
 ;;     (require 'emacs-jieba-rs)
-;;     (add-hook 'text-mode-hook #'emacs-jieba-rs-mode)
+;;     (emacs-jieba-rs-mode 1)
 ;;
 ;; The dynamic module has to be built first; see the README.
 
@@ -58,6 +59,12 @@
 The module is produced by running \"make\" in the package directory."
   :type 'file
   :group 'emacs-jieba-rs)
+
+(defconst emacs-jieba-rs--han-regexp
+  "[\u3007\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\U00020000-\U0002FA1F]"
+  "Regexp matching a Han character.
+CJK punctuation, kana, Hangul and other scripts are not matched, so a
+token is treated as Chinese only when it really contains Han text.")
 
 (defun emacs-jieba-rs--load-module ()
   "Load the jieba-bridge dynamic module, unless it is already loaded."
@@ -161,27 +168,75 @@ Chinese words as segmented by jieba.  A negative ARG kills forward."
         (when (< beg (point))
           (kill-region beg (point)))))))
 
-(defvar emacs-jieba-rs-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map [remap forward-word] #'emacs-jieba-rs-forward-word)
-    (define-key map [remap backward-word] #'emacs-jieba-rs-backward-word)
-    (define-key map [remap backward-kill-word]
-                #'emacs-jieba-rs-backward-kill-word)
-    map)
-  "Keymap for `emacs-jieba-rs-mode'.")
+(defun emacs-jieba-rs--chinese-word-p (direction)
+  "Return non-nil when the next jieba word in DIRECTION is Chinese.
+DIRECTION is either `forward' or `backward'.  Point does not move.
+
+The checked region is the text the motion command would traverse,
+including the punctuation and whitespace it skips.  Those tokens
+never contain Han characters, so matching the region is equivalent
+to matching the target word itself."
+  (let ((start (point)))
+    (save-excursion
+      (if (eq direction 'forward)
+          (emacs-jieba-rs--forward)
+        (emacs-jieba-rs--backward))
+      (string-match-p emacs-jieba-rs--han-regexp
+                      (buffer-substring-no-properties
+                       (min start (point))
+                       (max start (point)))))))
+
+(defun emacs-jieba-rs--forward-word-advice (orig &rest args)
+  "Call ORIG or the jieba command behind `forward-word'.
+Use jieba when the next word in the direction of travel is Chinese,
+and ORIG otherwise.  ARGS are forwarded; a missing ARG means one
+word."
+  (if (emacs-jieba-rs--chinese-word-p
+       (if (< (or (car args) 1) 0) 'backward 'forward))
+      (apply #'emacs-jieba-rs-forward-word args)
+    (apply orig (or args (list 1)))))
+
+(defun emacs-jieba-rs--backward-word-advice (orig &rest args)
+  "Call ORIG or the jieba command behind `backward-word'.
+Use jieba when the previous word in the direction of travel is
+Chinese, and ORIG otherwise.  ARGS are forwarded; a missing ARG
+means one word."
+  (if (emacs-jieba-rs--chinese-word-p
+       (if (< (or (car args) 1) 0) 'forward 'backward))
+      (apply #'emacs-jieba-rs-backward-word args)
+    (apply orig (or args (list 1)))))
+
+(defun emacs-jieba-rs--backward-kill-word-advice (orig &rest args)
+  "Call ORIG or the jieba command behind `backward-kill-word'.
+Use jieba when the word about to be killed is Chinese, and ORIG
+otherwise.  ARGS are forwarded; a missing ARG means one word."
+  (if (emacs-jieba-rs--chinese-word-p
+       (if (< (or (car args) 1) 0) 'forward 'backward))
+      (apply #'emacs-jieba-rs-backward-kill-word args)
+    (apply orig (or args (list 1)))))
+
+(defconst emacs-jieba-rs--advised-commands
+  '((forward-word . emacs-jieba-rs--forward-word-advice)
+    (backward-word . emacs-jieba-rs--backward-word-advice)
+    (backward-kill-word . emacs-jieba-rs--backward-kill-word-advice))
+  "Commands advised while `emacs-jieba-rs-mode' is enabled.")
 
 ;;;###autoload
 (define-minor-mode emacs-jieba-rs-mode
   "Toggle Chinese word motion based on jieba-rs.
 
-When enabled in a buffer, `forward-word', `backward-word' and
-`backward-kill-word' are remapped to commands that treat jieba
-tokens as words, so that moving and killing by word follow jieba
-segmentation instead of character runs."
+This is a global minor mode.  While it is enabled, `forward-word',
+`backward-word' and `backward-kill-word' are advised: when the word
+a command would move over or kill is Chinese, jieba segmentation
+decides its boundaries; otherwise the original command runs
+unchanged."
   :lighter " jieba"
   :global t
-  :keymap emacs-jieba-rs-mode-map
-  :group 'emacs-jieba-rs)
+  :group 'emacs-jieba-rs
+  (dolist (entry emacs-jieba-rs--advised-commands)
+    (if emacs-jieba-rs-mode
+        (advice-add (car entry) :around (cdr entry))
+      (advice-remove (car entry) (cdr entry)))))
 
 ;; Load the native module at load time: `jieba-cut' and `jieba-tokenize' are
 ;; part of the public interface and must be usable as soon as the package is

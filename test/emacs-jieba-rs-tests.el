@@ -28,8 +28,7 @@
 
 (defmacro emacs-jieba-rs-test--with-text (text point &rest body)
   "Insert TEXT in a temp buffer and evaluate BODY with point at POINT.
-POINT is a buffer position, or one of the symbols `beginning' and `end'.
-The minor mode is enabled, so remapped commands can be exercised too."
+POINT is a buffer position, or one of the symbols `beginning' and `end'."
   (declare (indent 2) (debug t))
   `(with-temp-buffer
      (insert ,text)
@@ -37,8 +36,17 @@ The minor mode is enabled, so remapped commands can be exercised too."
                   ('beginning (point-min))
                   ('end (point-max))
                   (_ ,point)))
-     (emacs-jieba-rs-mode 1)
      ,@body))
+
+(defmacro emacs-jieba-rs-test--with-mode (&rest body)
+  "Evaluate BODY with `emacs-jieba-rs-mode' enabled.
+The mode is disabled again afterwards, even if BODY signals."
+  (declare (indent 0) (debug t))
+  `(unwind-protect
+       (progn
+         (emacs-jieba-rs-mode 1)
+         ,@body)
+     (emacs-jieba-rs-mode -1)))
 
 (ert-deftest emacs-jieba-rs-test-cut ()
   "jieba-cut returns the jieba tokens of a string."
@@ -59,8 +67,8 @@ The minor mode is enabled, so remapped commands can be exercised too."
                            (jieba-tokenize text))
                    (jieba-cut text)))))
 
-(ert-deftest emacs-jieba-rs-test-forward-word ()
-  "M-f moves to the end of the next jieba word."
+(ert-deftest emacs-jieba-rs-test-forward-word-command ()
+  "The jieba forward command moves to the end of the next word."
   (emacs-jieba-rs-test--with-text "南京市长江大桥" 'beginning
     (emacs-jieba-rs-forward-word)
     (should (= (point) 4))
@@ -70,8 +78,8 @@ The minor mode is enabled, so remapped commands can be exercised too."
     (emacs-jieba-rs-forward-word)
     (should (= (point) 8))))
 
-(ert-deftest emacs-jieba-rs-test-backward-word ()
-  "M-b moves to the start of the previous jieba word."
+(ert-deftest emacs-jieba-rs-test-backward-word-command ()
+  "The jieba backward command moves to the start of the previous word."
   (emacs-jieba-rs-test--with-text "南京市长江大桥" 'end
     (emacs-jieba-rs-backward-word)
     (should (= (point) 4))
@@ -120,8 +128,8 @@ The minor mode is enabled, so remapped commands can be exercised too."
     (emacs-jieba-rs-backward-word 2)
     (should (= (point) 1))))
 
-(ert-deftest emacs-jieba-rs-test-backward-kill-word ()
-  "M-DEL kills exactly the words behind point."
+(ert-deftest emacs-jieba-rs-test-backward-kill-word-command ()
+  "The jieba kill command kills exactly the words behind point."
   (emacs-jieba-rs-test--with-text "南京市长江大桥" 'end
     (emacs-jieba-rs-backward-kill-word)
     (should (equal (buffer-string) "南京市"))
@@ -135,29 +143,96 @@ The minor mode is enabled, so remapped commands can be exercised too."
     (should (equal (buffer-string) "长江大桥"))
     (should (= (point) 1))))
 
-(ert-deftest emacs-jieba-rs-test-mode-remaps-word-commands ()
-  "Enabling the mode remaps the standard word commands."
-  (emacs-jieba-rs-test--with-text "南京市长江大桥" 'beginning
-    (should (eq (key-binding (kbd "M-f"))
-                #'emacs-jieba-rs-forward-word))
-    (should (eq (key-binding (kbd "M-b"))
-                #'emacs-jieba-rs-backward-word))
-    (should (eq (key-binding (kbd "M-DEL"))
-                #'emacs-jieba-rs-backward-kill-word))
-    (call-interactively (key-binding (kbd "M-f")))
-    (should (= (point) 4))
-    (call-interactively (key-binding (kbd "M-b")))
-    (should (= (point) 1))))
-
-(ert-deftest emacs-jieba-rs-test-mode-is-buffer-local-and-optional ()
-  "The mode is a buffer-local minor mode."
+(ert-deftest emacs-jieba-rs-test-mode-is-global-and-optional ()
+  "The mode is global and is off by default."
+  (emacs-jieba-rs-mode -1)
   (should-not (default-value 'emacs-jieba-rs-mode))
-  (emacs-jieba-rs-test--with-text "南京市" 'beginning
-    (should emacs-jieba-rs-mode)
-    (emacs-jieba-rs-mode -1)
-    (should-not emacs-jieba-rs-mode)
-    ;; With the mode off, the standard commands are bound again.
-    (should (eq (key-binding (kbd "M-f")) #'forward-word))))
+  (emacs-jieba-rs-test--with-mode
+    (should (default-value 'emacs-jieba-rs-mode))
+    (with-temp-buffer
+      (should emacs-jieba-rs-mode)))
+  (should-not (default-value 'emacs-jieba-rs-mode)))
+
+(ert-deftest emacs-jieba-rs-test-mode-advises-word-commands ()
+  "The mode adds and removes the three advices."
+  (emacs-jieba-rs-mode -1)
+  (dolist (entry emacs-jieba-rs--advised-commands)
+    (should-not (advice-member-p (cdr entry) (car entry))))
+  (emacs-jieba-rs-test--with-mode
+    (dolist (entry emacs-jieba-rs--advised-commands)
+      (should (advice-member-p (cdr entry) (car entry)))))
+  (dolist (entry emacs-jieba-rs--advised-commands)
+    (should-not (advice-member-p (cdr entry) (car entry)))))
+
+(ert-deftest emacs-jieba-rs-test-advice-uses-jieba-for-chinese ()
+  "Advice moves and kills by jieba words in Chinese text."
+  (emacs-jieba-rs-test--with-mode
+    (emacs-jieba-rs-test--with-text "南京市长江大桥" 'beginning
+      (forward-word)
+      (should (= (point) 4))
+      (forward-word)
+      (should (= (point) 8)))
+    (emacs-jieba-rs-test--with-text "南京市长江大桥" 'end
+      (backward-word)
+      (should (= (point) 4)))
+    (emacs-jieba-rs-test--with-text "南京市长江大桥" 'end
+      (backward-kill-word)
+      (should (equal (buffer-string) "南京市")))
+    ;; Prefix arguments are forwarded to the jieba commands.
+    (emacs-jieba-rs-test--with-text "南京市长江大桥" 'beginning
+      (forward-word 2)
+      (should (= (point) 8)))))
+
+(ert-deftest emacs-jieba-rs-test-advice-falls-back-to-original ()
+  "Advice leaves non-Chinese words to the original commands."
+  (emacs-jieba-rs-test--with-mode
+    (emacs-jieba-rs-test--with-text "hello world" 'beginning
+      (forward-word)
+      (should (= (point) 6))
+      (forward-word)
+      (should (= (point) 12))
+      (backward-word)
+      (should (= (point) 7)))
+    (emacs-jieba-rs-test--with-text "hello world" 'end
+      (backward-kill-word)
+      (should (equal (buffer-string) "hello ")))))
+
+(ert-deftest emacs-jieba-rs-test-mode-works-through-keys ()
+  "The advice is used when the commands are invoked interactively."
+  (emacs-jieba-rs-test--with-mode
+    (emacs-jieba-rs-test--with-text "南京市长江大桥" 'beginning
+      (call-interactively #'forward-word)
+      (should (= (point) 4))
+      (let ((current-prefix-arg 2))
+        (call-interactively #'backward-word))
+      (should (= (point) 1)))
+    (emacs-jieba-rs-test--with-text "南京市长江大桥" 'end
+      (call-interactively #'backward-kill-word)
+      (should (equal (buffer-string) "南京市")))))
+
+(ert-deftest emacs-jieba-rs-test-advice-dispatches-per-word ()
+  "Mixed text dispatches each word according to its own script."
+  (emacs-jieba-rs-test--with-mode
+    (emacs-jieba-rs-test--with-text "hello 你好世界" 'beginning
+      ;; "hello" is ASCII: the original command moves to its end.
+      (forward-word)
+      (should (= (point) 6))
+      ;; "你好" and "世界" are jieba words.
+      (forward-word)
+      (should (= (point) 9))
+      (forward-word)
+      (should (= (point) 11))
+      (backward-word)
+      (should (= (point) 9))
+      (backward-word)
+      (should (= (point) 7))
+      (backward-word)
+      (should (= (point) 1)))
+    (emacs-jieba-rs-test--with-text "hello 你好" 'end
+      (backward-kill-word)
+      (should (equal (buffer-string) "hello "))
+      (backward-kill-word)
+      (should (equal (buffer-string) "")))))
 
 (provide 'emacs-jieba-rs-tests)
 
