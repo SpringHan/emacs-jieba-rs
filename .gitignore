@@ -2,4 +2,4 @@
 /jieba-bridge.so
 /jieba-bridge.dylib
 /jieba-bridge.dll
-/*.elc
+*.elc
