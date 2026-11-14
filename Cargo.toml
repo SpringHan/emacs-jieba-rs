@@ -1,0 +1,13 @@
+[package]
+name = "jieba-bridge"
+version = "0.1.0"
+edition = "2024"
+description = "Emacs dynamic module exposing jieba-rs Chinese word segmentation"
+license = "GPL-3.0-or-later"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+emacs = "0.23"
+jieba-rs = "0.11"
